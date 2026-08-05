@@ -188,7 +188,7 @@ if st.session_state.trouble:
 # ---- ステップ4：疎通確認（クリックで結果表示） ----
 if st.session_state.checking:
     st.subheader("③ 疎通確認")
-    st.write("下の機器名をクリックすると、ノートPCからその機器への疎通確認結果が表示されます。")
+    st.write("下の機器名a～dをクリックすると、ノートPCからその機器への疎通確認結果が表示されます。")
 
     cols = st.columns(4)
     for i, (key, info) in enumerate(PING_TARGETS.items()):
