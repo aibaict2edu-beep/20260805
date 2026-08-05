@@ -1,6 +1,6 @@
 import streamlit as st
-import matplotlib.pyplot as plt
-from matplotlib.patches import FancyBboxPatch
+#import matplotlib.pyplot as plt
+#from matplotlib.patches import FancyBboxPatch
 
 st.set_page_config(page_title="自宅ネットワークトラブル解決教材", layout="wide")
 
