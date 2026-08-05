@@ -1,23 +1,39 @@
+import random
 import streamlit as st
 
 st.set_page_config(page_title="自宅ネットワークトラブル解決教材", layout="wide")
 
 # =========================================================
-# 固定データ（今回のシナリオ）
+# 固定データ（4つの障害シナリオ）
 # =========================================================
-FAULT_OPTIONS = {
-    "①": "LANケーブルの接触不良・断線（デスクトップPC間）",
-    "②": "HUBの障害（特定ポートの故障）",
-    "③": "無線LANアクセスポイントの障害（無線AP本体の故障）",
-    "④": "ルーターの障害（ルーター本体の故障、または特定ポートの不具合）",
+FAULT_SCENARIOS = {
+    "①": {
+        "cause": "LANケーブルの接触不良・断線（HUB〜デスクトップPC間）",
+        "results": {"a": "〇", "b": "〇", "c": "×", "d": "〇"},
+        "highlight": {"type": "edge", "edge": ("HUB", "Desktop")},
+    },
+    "②": {
+        "cause": "HUBの障害（特定ポートの故障）",
+        "results": {"a": "×", "b": "〇", "c": "×", "d": "×"},
+        "highlight": {"type": "node", "node": "HUB"},
+    },
+    "③": {
+        "cause": "無線LANアクセスポイントの障害（無線AP本体の故障）",
+        "results": {"a": "×", "b": "×", "c": "×", "d": "×"},
+        "highlight": {"type": "node", "node": "AP"},
+    },
+    "④": {
+        "cause": "ルーターの障害（ルーター本体の故障）",
+        "results": {"a": "×", "b": "〇", "c": "〇", "d": "〇"},
+        "highlight": {"type": "node", "node": "Router"},
+    },
 }
-CORRECT_ANSWER = "①"
 
-PING_TARGETS = {
-    "a": {"name": "ルーター", "result": "〇"},
-    "b": {"name": "無線LANアクセスポイント", "result": "〇"},
-    "c": {"name": "デスクトップPC", "result": "×"},
-    "d": {"name": "プリンタ", "result": "〇"},
+TARGET_NAMES = {
+    "a": "ルーター",
+    "b": "無線LANアクセスポイント",
+    "c": "デスクトップPC",
+    "d": "プリンタ",
 }
 
 KNOWLEDGE_MEMO = [
@@ -47,7 +63,8 @@ def init_state():
         "started": False,
         "trouble": False,
         "checking": False,
-        "checked": {k: False for k in PING_TARGETS},
+        "current_fault": None,   # ランダムに決まる正解（①〜④）
+        "checked": {k: False for k in TARGET_NAMES},
         "submitted": False,
         "selected_answer": "-- 選択してください --",
     }
@@ -61,16 +78,16 @@ def reset_all():
     st.session_state.started = False
     st.session_state.trouble = False
     st.session_state.checking = False
-    st.session_state.checked = {k: False for k in PING_TARGETS}
+    st.session_state.current_fault = None
+    st.session_state.checked = {k: False for k in TARGET_NAMES}
     st.session_state.submitted = False
     st.session_state.selected_answer = "-- 選択してください --"
 
 # =========================================================
 # ネットワーク図（SVG）
-# 日本語テキストはブラウザ側のフォントで描画されるため、
-# サーバー側に日本語フォントが無くても文字化けしない。
 # =========================================================
-def build_network_svg(show_fault: bool) -> str:
+def build_network_svg(highlight=None):
+    """highlight: {'type':'edge','edge':(a,b)} または {'type':'node','node':key} または None"""
     nodes = {
         "ISP":     {"x": 250, "y": 30,  "w": 90,  "h": 44, "label": "ISP",              "color": "#e0e0e0"},
         "Router":  {"x": 250, "y": 110, "w": 120, "h": 48, "label": "ルーター",          "color": "#a9d0f5"},
@@ -81,25 +98,29 @@ def build_network_svg(show_fault: bool) -> str:
         "NotePC":  {"x": 90,  "y": 370, "w": 120, "h": 48, "label": "ノートPC",          "color": "#c6f0b6"},
     }
     edges = [
-        ("ISP", "Router", "solid", False),
-        ("Router", "HUB", "solid", False),
-        ("HUB", "AP", "solid", False),
-        ("HUB", "Desktop", "solid", True),   # HUB〜デスクトップPC間（今回の障害区間）
-        ("HUB", "Printer", "solid", False),
-        ("AP", "NotePC", "dashed", False),
+        ("ISP", "Router", "solid"),
+        ("Router", "HUB", "solid"),
+        ("HUB", "AP", "solid"),
+        ("HUB", "Desktop", "solid"),
+        ("HUB", "Printer", "solid"),
+        ("AP", "NotePC", "dashed"),
     ]
+
+    fault_edge = highlight["edge"] if highlight and highlight["type"] == "edge" else None
+    fault_node = highlight["node"] if highlight and highlight["type"] == "node" else None
 
     svg_parts = [
         '<svg viewBox="0 0 500 430" xmlns="http://www.w3.org/2000/svg" '
         'style="width:100%;max-width:600px;height:auto;font-family:sans-serif;">'
     ]
 
-    for start, end, style, is_fault in edges:
+    for start, end, style in edges:
         n1, n2 = nodes[start], nodes[end]
         x1, y1 = n1["x"], n1["y"] + n1["h"] / 2
         x2, y2 = n2["x"], n2["y"] - n2["h"] / 2
         dash = ' stroke-dasharray="6,5"' if style == "dashed" else ""
-        if is_fault and show_fault:
+        is_fault = fault_edge is not None and set(fault_edge) == {start, end}
+        if is_fault:
             svg_parts.append(
                 f'<line x1="{x1}" y1="{y1}" x2="{x2}" y2="{y2}" '
                 f'stroke="#d9333f" stroke-width="5"{dash} />'
@@ -117,9 +138,12 @@ def build_network_svg(show_fault: bool) -> str:
 
     for key, n in nodes.items():
         x, y, w, h = n["x"], n["y"], n["w"], n["h"]
+        is_fault_node = (key == fault_node)
+        stroke = "#d9333f" if is_fault_node else "#555555"
+        stroke_width = 4 if is_fault_node else 1.5
         svg_parts.append(
             f'<rect x="{x - w/2}" y="{y - h/2}" width="{w}" height="{h}" rx="8" ry="8" '
-            f'fill="{n["color"]}" stroke="#555555" stroke-width="1.5" />'
+            f'fill="{n["color"]}" stroke="{stroke}" stroke-width="{stroke_width}" />'
         )
         lines = n["label"].split("\n")
         n_lines = len(lines)
@@ -129,6 +153,11 @@ def build_network_svg(show_fault: bool) -> str:
             svg_parts.append(
                 f'<text x="{x}" y="{start_y + i * line_height}" text-anchor="middle" '
                 f'font-size="13" fill="#222222">{line}</text>'
+            )
+        if is_fault_node:
+            svg_parts.append(
+                f'<text x="{x}" y="{y + h/2 + 16}" text-anchor="middle" '
+                f'fill="#d9333f" font-size="13" font-weight="bold">故障！</text>'
             )
 
     svg_parts.append("</svg>")
@@ -164,14 +193,20 @@ if not st.session_state.started:
 # ---- ステップ2：構成図の表示 ----
 if st.session_state.started:
     st.subheader("① ネットワーク構成")
-    show_fault = (st.session_state.submitted and
-                  st.session_state.selected_answer == CORRECT_ANSWER)
-    st.markdown(build_network_svg(show_fault), unsafe_allow_html=True)
+
+    show_answer = (st.session_state.submitted and
+                    st.session_state.selected_answer == st.session_state.current_fault)
+    highlight = None
+    if show_answer and st.session_state.current_fault:
+        highlight = FAULT_SCENARIOS[st.session_state.current_fault]["highlight"]
+
+    st.markdown(build_network_svg(highlight), unsafe_allow_html=True)
 
     if not st.session_state.trouble:
         st.write("上図が現在の自宅ネットワーク構成です。")
         if st.button("⚠ トラブル発生", type="primary"):
             st.session_state.trouble = True
+            st.session_state.current_fault = random.choice(list(FAULT_SCENARIOS.keys()))
             st.rerun()
 
 # ---- ステップ3：トラブル発生メッセージ ----
@@ -188,21 +223,23 @@ if st.session_state.trouble:
 # ---- ステップ4：疎通確認（クリックで結果表示） ----
 if st.session_state.checking:
     st.subheader("③ 疎通確認")
-    st.write("下の機器名a～dをクリックすると、ノートPCからその機器への疎通確認結果が表示されます。")
+    st.write("下の機器名をクリックすると、ノートPCからその機器への疎通確認結果が表示されます。")
+
+    current_results = FAULT_SCENARIOS[st.session_state.current_fault]["results"]
 
     cols = st.columns(4)
-    for i, (key, info) in enumerate(PING_TARGETS.items()):
+    for i, key in enumerate(TARGET_NAMES):
         with cols[i]:
-            if st.button(f"{key}. {info['name']} に疎通確認", key=f"btn_{key}"):
+            if st.button(f"{key}. {TARGET_NAMES[key]} に疎通確認", key=f"btn_{key}"):
                 st.session_state.checked[key] = True
                 st.rerun()
 
     st.write("")
     st.markdown("**疎通確認結果**")
     table_md = "| | 疎通確認先 | 疎通確認結果 |\n|---|---|---|\n"
-    for key, info in PING_TARGETS.items():
-        result = info["result"] if st.session_state.checked[key] else "未確認"
-        table_md += f"| {key} | {info['name']} | {result} |\n"
+    for key in TARGET_NAMES:
+        result = current_results[key] if st.session_state.checked[key] else "未確認"
+        table_md += f"| {key} | {TARGET_NAMES[key]} | {result} |\n"
     st.markdown(table_md)
 
     all_checked = all(st.session_state.checked.values())
@@ -214,7 +251,7 @@ if st.session_state.checking:
                  "最も可能性が高いものを1つ選んでください。")
 
         options = ["-- 選択してください --"] + [
-            f"{k} {v}" for k, v in FAULT_OPTIONS.items()
+            f"{k} {v['cause']}" for k, v in FAULT_SCENARIOS.items()
         ]
         choice = st.selectbox("想定される障害", options, key="answer_select")
         choice_key = choice.split(" ")[0] if choice != "-- 選択してください --" else None
@@ -225,22 +262,23 @@ if st.session_state.checking:
             st.rerun()
 
         if st.session_state.submitted:
-            if st.session_state.selected_answer == CORRECT_ANSWER:
+            correct = st.session_state.current_fault
+            if st.session_state.selected_answer == correct:
                 st.success("✅ 正解です！")
                 st.markdown(
-                    "**解説**：ルーター（a）・無線LANアクセスポイント（b）・プリンタ（d）への疎通は"
-                    "すべて成功しており、ルーターやHUB、無線APといった共有区間の機器は正常に動作しています。"
-                    "一方、デスクトップPC（c）だけが疎通できないことから、他の機器に影響を与えない"
-                    "**デスクトップPC固有の接続区間（HUB〜デスクトップPC間のLANケーブル）**に問題があると"
-                    "推定できます。実際にHUB〜デスクトップPC間のケーブルが接触不良・断線していました。"
+                    f"**解説**：正解は「{FAULT_SCENARIOS[correct]['cause']}」でした。"
+                    "上のネットワーク構成図で、故障箇所が赤く表示されています。"
+                    "疎通確認の結果（〇/×のパターン）から、どの機器・区間が影響範囲に含まれているかを"
+                    "たどることで、故障箇所を絞り込むことができます。"
                 )
             else:
                 st.error("❌ 残念、正解ではありません。")
                 st.markdown(
-                    "**考え方のヒント**：もしHUB・ルーター・無線APのいずれかが故障していれば、"
-                    "それらを経由する他の機器（ルーター、無線AP、プリンタ）への疎通にも影響が出るはずです。"
-                    "しかし今回はデスクトップPC以外はすべて疎通できています。"
-                    "影響が及んでいる範囲が最も狭い原因は何か、もう一度考えてみましょう。"
+                    "**考え方のヒント**：疎通確認結果で「×」になっている機器と「〇」になっている機器を見比べ、"
+                    "どの機器が故障・断線すると、ちょうどこの〇×のパターンになるかを、"
+                    "ネットワーク構成図をたどりながら考えてみましょう。"
+                    "たとえば、ある機器から先の区間だけがすべて×になっている場合、"
+                    "その手前の機器や区間に原因がある可能性が高いです。"
                 )
                 if st.button("もう一度選び直す"):
                     st.session_state.submitted = False
