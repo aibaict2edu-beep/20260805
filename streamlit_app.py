@@ -1,13 +1,10 @@
 import streamlit as st
-#import matplotlib.pyplot as plt
-#from matplotlib.patches import FancyBboxPatch
 
 st.set_page_config(page_title="自宅ネットワークトラブル解決教材", layout="wide")
 
 # =========================================================
 # 固定データ（今回のシナリオ）
 # =========================================================
-# 想定される障害の選択肢
 FAULT_OPTIONS = {
     "①": "LANケーブルの接触不良・断線（ノートPC〜無線AP間、無線AP〜HUB間、またはHUB〜デスクトップPC間など）",
     "②": "HUBの障害（特定ポートの故障）",
@@ -16,7 +13,6 @@ FAULT_OPTIONS = {
 }
 CORRECT_ANSWER = "①"
 
-# 疎通確認結果（固定）
 PING_TARGETS = {
     "a": {"name": "ルーター", "result": "〇"},
     "b": {"name": "無線LANアクセスポイント", "result": "〇"},
@@ -53,7 +49,7 @@ def init_state():
         "checking": False,
         "checked": {k: False for k in PING_TARGETS},
         "submitted": False,
-        "selected_answer": None,
+        "selected_answer": "-- 選択してください --",
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -67,77 +63,76 @@ def reset_all():
     st.session_state.checking = False
     st.session_state.checked = {k: False for k in PING_TARGETS}
     st.session_state.submitted = False
-    st.session_state.selected_answer = None
+    st.session_state.selected_answer = "-- 選択してください --"
 
 # =========================================================
-# ネットワーク図の描画（matplotlib）
+# ネットワーク図（SVG）
+# 日本語テキストはブラウザ側のフォントで描画されるため、
+# サーバー側に日本語フォントが無くても文字化けしない。
 # =========================================================
-def draw_network(show_fault=False):
-    fig, ax = plt.subplots(figsize=(8, 5.5))
-    ax.set_xlim(0, 10)
-    ax.set_ylim(0, 11)
-    ax.axis("off")
-
-    positions = {
-        "ISP": (5, 10),
-        "Router": (5, 8),
-        "HUB": (5, 6),
-        "AP": (2, 4),
-        "Desktop": (5, 4),
-        "Printer": (8, 4),
-        "NotePC": (2, 1.8),
+def build_network_svg(show_fault: bool) -> str:
+    nodes = {
+        "ISP":     {"x": 250, "y": 30,  "w": 90,  "h": 44, "label": "ISP",              "color": "#e0e0e0"},
+        "Router":  {"x": 250, "y": 110, "w": 120, "h": 48, "label": "ルーター",          "color": "#a9d0f5"},
+        "HUB":     {"x": 250, "y": 190, "w": 120, "h": 48, "label": "HUB",               "color": "#a9d0f5"},
+        "AP":      {"x": 90,  "y": 280, "w": 130, "h": 56, "label": "無線LAN\nアクセスポイント", "color": "#a9d0f5"},
+        "Desktop": {"x": 250, "y": 280, "w": 130, "h": 48, "label": "デスクトップPC",     "color": "#f7b6b6"},
+        "Printer": {"x": 410, "y": 280, "w": 120, "h": 48, "label": "プリンタ",          "color": "#a9d0f5"},
+        "NotePC":  {"x": 90,  "y": 370, "w": 120, "h": 48, "label": "ノートPC",          "color": "#c6f0b6"},
     }
-    labels = {
-        "ISP": "ISP",
-        "Router": "ルーター",
-        "HUB": "HUB",
-        "AP": "無線LAN\nアクセスポイント",
-        "Desktop": "デスクトップPC",
-        "Printer": "プリンタ",
-        "NotePC": "ノートPC",
-    }
-    colors = {
-        "ISP": "#d9d9d9",
-        "Router": "#a9d0f5",
-        "HUB": "#a9d0f5",
-        "AP": "#a9d0f5",
-        "Desktop": "#f7b6b6",
-        "Printer": "#a9d0f5",
-        "NotePC": "#c6f0b6",
-    }
-
     edges = [
         ("ISP", "Router", "solid", False),
         ("Router", "HUB", "solid", False),
         ("HUB", "AP", "solid", False),
-        ("HUB", "Desktop", "solid", True),   # 障害区間の候補（HUB〜デスクトップPC）
+        ("HUB", "Desktop", "solid", True),   # HUB〜デスクトップPC間（今回の障害区間）
         ("HUB", "Printer", "solid", False),
         ("AP", "NotePC", "dashed", False),
     ]
 
-    for start, end, style, is_fault_edge in edges:
-        x1, y1 = positions[start]
-        x2, y2 = positions[end]
-        if is_fault_edge and show_fault:
-            ax.plot([x1, x2], [y1, y2], color="red", linewidth=3.5, linestyle="solid", zorder=1)
-            ax.text((x1 + x2) / 2 + 0.3, (y1 + y2) / 2, "断線！",
-                     color="red", fontsize=10, fontweight="bold")
+    svg_parts = [
+        '<svg viewBox="0 0 500 430" xmlns="http://www.w3.org/2000/svg" '
+        'style="width:100%;max-width:600px;height:auto;font-family:sans-serif;">'
+    ]
+
+    for start, end, style, is_fault in edges:
+        n1, n2 = nodes[start], nodes[end]
+        x1, y1 = n1["x"], n1["y"] + n1["h"] / 2
+        x2, y2 = n2["x"], n2["y"] - n2["h"] / 2
+        dash = ' stroke-dasharray="6,5"' if style == "dashed" else ""
+        if is_fault and show_fault:
+            svg_parts.append(
+                f'<line x1="{x1}" y1="{y1}" x2="{x2}" y2="{y2}" '
+                f'stroke="#d9333f" stroke-width="5"{dash} />'
+            )
+            mx, my = (x1 + x2) / 2 + 12, (y1 + y2) / 2
+            svg_parts.append(
+                f'<text x="{mx}" y="{my}" fill="#d9333f" font-size="14" '
+                f'font-weight="bold">断線！</text>'
+            )
         else:
-            ax.plot([x1, x2], [y1, y2], color="#888888", linewidth=1.8,
-                     linestyle=style, zorder=1)
+            svg_parts.append(
+                f'<line x1="{x1}" y1="{y1}" x2="{x2}" y2="{y2}" '
+                f'stroke="#888888" stroke-width="2"{dash} />'
+            )
 
-    box_w, box_h = 1.8, 0.9
-    for key, (x, y) in positions.items():
-        box = FancyBboxPatch(
-            (x - box_w / 2, y - box_h / 2), box_w, box_h,
-            boxstyle="round,pad=0.05,rounding_size=0.08",
-            linewidth=1.2, edgecolor="#555555", facecolor=colors[key], zorder=2,
+    for key, n in nodes.items():
+        x, y, w, h = n["x"], n["y"], n["w"], n["h"]
+        svg_parts.append(
+            f'<rect x="{x - w/2}" y="{y - h/2}" width="{w}" height="{h}" rx="8" ry="8" '
+            f'fill="{n["color"]}" stroke="#555555" stroke-width="1.5" />'
         )
-        ax.add_patch(box)
-        ax.text(x, y, labels[key], ha="center", va="center", fontsize=9, zorder=3)
+        lines = n["label"].split("\n")
+        n_lines = len(lines)
+        line_height = 15
+        start_y = y - (n_lines - 1) * line_height / 2 + 5
+        for i, line in enumerate(lines):
+            svg_parts.append(
+                f'<text x="{x}" y="{start_y + i * line_height}" text-anchor="middle" '
+                f'font-size="13" fill="#222222">{line}</text>'
+            )
 
-    fig.tight_layout()
-    return fig
+    svg_parts.append("</svg>")
+    return "".join(svg_parts)
 
 # =========================================================
 # 画面構成
@@ -169,8 +164,9 @@ if not st.session_state.started:
 # ---- ステップ2：構成図の表示 ----
 if st.session_state.started:
     st.subheader("① ネットワーク構成")
-    st.pyplot(draw_network(show_fault=(st.session_state.submitted and
-                                        st.session_state.selected_answer == CORRECT_ANSWER)))
+    show_fault = (st.session_state.submitted and
+                  st.session_state.selected_answer == CORRECT_ANSWER)
+    st.markdown(build_network_svg(show_fault), unsafe_allow_html=True)
 
     if not st.session_state.trouble:
         st.write("上図が現在の自宅ネットワーク構成です。")
@@ -217,17 +213,15 @@ if st.session_state.checking:
         st.write("疎通確認の結果から、想定される障害①〜④のうち、"
                  "最も可能性が高いものを1つ選んでください。")
 
-        choice = st.radio(
-            "想定される障害",
-            options=list(FAULT_OPTIONS.keys()),
-            format_func=lambda k: f"{k} {FAULT_OPTIONS[k]}",
-            index=None,
-            key="answer_radio",
-        )
+        options = ["-- 選択してください --"] + [
+            f"{k} {v}" for k, v in FAULT_OPTIONS.items()
+        ]
+        choice = st.selectbox("想定される障害", options, key="answer_select")
+        choice_key = choice.split(" ")[0] if choice != "-- 選択してください --" else None
 
-        if st.button("この原因で回答する", type="primary", disabled=(choice is None)):
+        if st.button("この原因で回答する", type="primary", disabled=(choice_key is None)):
             st.session_state.submitted = True
-            st.session_state.selected_answer = choice
+            st.session_state.selected_answer = choice_key
             st.rerun()
 
         if st.session_state.submitted:
@@ -250,5 +244,5 @@ if st.session_state.checking:
                 )
                 if st.button("もう一度選び直す"):
                     st.session_state.submitted = False
-                    st.session_state.selected_answer = None
+                    st.session_state.selected_answer = "-- 選択してください --"
                     st.rerun()
