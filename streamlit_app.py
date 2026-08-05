@@ -212,7 +212,7 @@ if st.session_state.started:
 # ---- ステップ3：トラブル発生メッセージ ----
 if st.session_state.trouble:
     st.subheader("② トラブル発生")
-    st.error("ノートPCからデスクトップPCへのネットワーク接続ができません")
+    st.error("ネットワークに障害が発生しました。疎通確認を行い、トラブルが起きた機器を特定してください。")
 
     if not st.session_state.checking:
         st.write("ノートPCから疎通確認を行います。")
