@@ -297,6 +297,24 @@ def build_network_svg(highlight=None, status=None):
 # =========================================================
 # 画面構成
 # =========================================================
+st.markdown(
+    """
+    <style>
+    .sticky-diagram { position: sticky; top: 4rem; }
+    .status-card {
+        background: #ffffff; border: 1px solid #e6e6e6; border-radius: 10px;
+        padding: 14px 16px; margin-top: 10px; box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    }
+    .status-row { display:flex; justify-content:space-between; font-size:14px; padding:4px 0; }
+    .status-label { color:#555; }
+    .status-value { font-weight:600; }
+    div.stButton > button { transition: all 0.15s ease-in-out; }
+    div.stButton > button:hover { transform: translateY(-1px); box-shadow: 0 3px 8px rgba(0,0,0,0.12); }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 st.title("🏠 自宅ネットワークトラブル解決教材")
 st.caption("実際に疎通確認コマンドを打つ感覚で、トラブルの原因を突き止めよう")
 
@@ -313,17 +331,20 @@ with st.sidebar:
         reset_all()
         st.rerun()
 
-# ---- ステップ1：スタート ----
+# ---- ステップ1：スタート（構成図の前に表示） ----
 if not st.session_state.started:
     st.info("このアプリでは、自宅内のネットワーク構成を確認しながら、"
             "発生したトラブルの原因をpingやHUBのランプ確認によって特定していきます。")
     if st.button("▶ スタート", type="primary"):
         st.session_state.started = True
         st.rerun()
+    st.stop()
 
-# ---- ステップ2：構成図の表示 ----
-if st.session_state.started:
-    st.subheader("① ネットワーク構成")
+# ---- ここから：左＝構成図（常時表示・スクロール不要）／右＝操作パネル ----
+diagram_col, panel_col = st.columns([0.42, 0.58], gap="large")
+
+with diagram_col:
+    st.markdown("### 🗺️ ネットワーク構成図")
 
     show_answer = (st.session_state.submitted and
                     st.session_state.selected_answer == st.session_state.current_fault)
@@ -332,148 +353,180 @@ if st.session_state.started:
         highlight = FAULT_SCENARIOS[st.session_state.current_fault]["highlight"]
 
     status = {}
+    current_results = None
+    current_lamp = None
     if st.session_state.current_fault:
         current_results = FAULT_SCENARIOS[st.session_state.current_fault]["results"]
+        current_lamp = FAULT_SCENARIOS[st.session_state.current_fault]["lamp"]
         for key, node_key in KEY_TO_NODE.items():
             if st.session_state.checked.get(key):
                 status[node_key] = "ok" if current_results[key] == "〇" else "ng"
 
-    st.markdown(build_network_svg(highlight, status), unsafe_allow_html=True)
+    svg = build_network_svg(highlight, status)
+    st.markdown(f'<div class="sticky-diagram">{svg}', unsafe_allow_html=True)
 
+    # ---- 進捗ミニダッシュボード（図の直下・常に見える） ----
+    checked_count = sum(st.session_state.checked.values())
+    trouble_state = "発生中 ⚠️" if st.session_state.trouble else "なし"
+    lamp_state = "確認済み 💡" if st.session_state.lamp_checked else "未確認"
+    st.markdown(
+        f"""
+        <div class="status-card">
+            <div class="status-row"><span class="status-label">トラブル状態</span>
+                <span class="status-value">{trouble_state}</span></div>
+            <div class="status-row"><span class="status-label">Ping確認</span>
+                <span class="status-value">{checked_count} / 4</span></div>
+            <div class="status-row"><span class="status-label">HUBランプ確認</span>
+                <span class="status-value">{lamp_state}</span></div>
+        </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+with panel_col:
+    # ---- ステップ2：トラブル発生前 ----
     if not st.session_state.trouble:
-        st.write("上図が現在の自宅ネットワーク構成です。IPアドレスも確認しておきましょう。")
-        if st.button("⚠ トラブル発生", type="primary"):
+        st.subheader("① ネットワークは正常です")
+        st.write("左の構成図とIPアドレスを確認したら、トラブルを発生させてみましょう。")
+        if st.button("⚠ トラブル発生", type="primary", use_container_width=True):
             st.session_state.trouble = True
             st.session_state.current_fault = random.choice(list(FAULT_SCENARIOS.keys()))
             st.rerun()
 
-# ---- ステップ3：トラブル発生メッセージ ----
-if st.session_state.trouble:
-    st.subheader("② トラブル発生")
-    st.error("ネットワークに障害が発生しました。疎通確認を行い、トラブルが起きた機器を特定してください。")
+    # ---- ステップ3：トラブル発生メッセージ ----
+    if st.session_state.trouble:
+        st.subheader("② トラブル発生")
+        st.error("ネットワークに障害が発生しました。疎通確認を行い、トラブルが起きた機器を特定してください。")
 
-    if not st.session_state.checking:
-        st.write("ノートPCから調査を行います。")
-        if st.button("調査を開始する", type="primary"):
-            st.session_state.checking = True
-            st.rerun()
-
-# ---- ステップ4：調査（ping操作 と HUBランプ確認の2カラム） ----
-if st.session_state.checking:
-    st.subheader("③ 調査")
-
-    current_results = FAULT_SCENARIOS[st.session_state.current_fault]["results"]
-    current_lamp = FAULT_SCENARIOS[st.session_state.current_fault]["lamp"]
-
-    col_ping, col_lamp = st.columns(2)
-
-    # ---- 左カラム：ping操作 ----
-    with col_ping:
-        st.markdown("#### 📡 ping操作")
-        st.caption(f"ノートPC（{NOTEPC_IP}）から各機器へpingを実行します。")
-        for key, name in TARGET_NAMES.items():
-            already = st.session_state.checked[key]
-            label = f"{key}. {name}" + (" ✅" if already else "")
-            if st.button(f"{label} へ ping", key=f"btn_{key}", disabled=already, use_container_width=True):
-                ip = TARGET_IPS[key]
-                success = current_results[key] == "〇"
-                with st.spinner(f"{name}（{ip}）へ疎通確認中…"):
-                    time.sleep(0.9)
-                st.session_state.ping_logs[key] = make_ping_log(name, ip, success)
-                st.session_state.checked[key] = True
-                st.toast(
-                    f"{name} への疎通：{'成功 〇' if success else '失敗 ×'}",
-                    icon="✅" if success else "🚫",
-                )
+        if not st.session_state.checking:
+            st.write("ノートPCから調査を行います。")
+            if st.button("調査を開始する", type="primary", use_container_width=True):
+                st.session_state.checking = True
                 st.rerun()
 
-        if st.session_state.ping_logs:
-            with st.expander("pingコンソール出力を見る"):
-                for key, name in TARGET_NAMES.items():
-                    if key in st.session_state.ping_logs:
-                        st.code(st.session_state.ping_logs[key], language="text")
+    # ---- ステップ4：調査（タブでping操作／HUBランプ確認／結果一覧を切り替え） ----
+    if st.session_state.checking:
+        st.subheader("③ 調査")
 
-    # ---- 右カラム：HUBランプ確認 ----
-    with col_lamp:
-        st.markdown("#### 💡 HUBランプ確認")
-        st.caption("HUB本体のリンクランプ（点灯＝物理的に接続OK）を目視で確認します。")
-        if not st.session_state.lamp_checked:
-            if st.button("🔍 HUBのランプを確認する", type="secondary", use_container_width=True):
-                with st.spinner("HUB本体のランプを確認中…"):
-                    time.sleep(0.9)
-                st.session_state.lamp_checked = True
-                st.toast("HUBのランプ状態を確認しました", icon="💡")
-                st.rerun()
-        else:
-            for port_key, info in LAMP_PORTS.items():
-                on = current_lamp[port_key] == "on"
-                icon = "🟢" if on else "🔴"
-                state = "点灯（リンクOK）" if on else "消灯（リンクなし）"
-                st.write(f"{icon} **{info['label']}**：{state}")
-            st.caption("※ランプは物理的な接続状態のみを示します。正常点灯していても、"
-                       "機器内部の故障で通信できない場合があります。")
+        tab_ping, tab_lamp, tab_summary = st.tabs(
+            ["📡 ping操作", "💡 HUBランプ確認", "📋 結果一覧"]
+        )
 
-    # ---- 調査結果一覧 ----
-    st.write("")
-    st.markdown("#### 📋 調査結果一覧")
-    tab_ping, tab_lamp = st.tabs(["Ping結果一覧", "HUBランプ結果一覧"])
-    with tab_ping:
-        st.markdown(build_ping_table(current_results, st.session_state.checked), unsafe_allow_html=True)
-    with tab_lamp:
-        st.markdown(build_lamp_table(current_lamp, st.session_state.lamp_checked), unsafe_allow_html=True)
+        with tab_ping:
+            st.caption(f"ノートPC（{NOTEPC_IP}）から各機器へpingを実行します。")
+            btn_cols = st.columns(2)
+            for i, (key, name) in enumerate(TARGET_NAMES.items()):
+                with btn_cols[i % 2]:
+                    already = st.session_state.checked[key]
+                    label = f"{key}. {name}" + (" ✅" if already else "")
+                    if st.button(f"{label} へ ping", key=f"btn_{key}",
+                                 disabled=already, use_container_width=True):
+                        ip = TARGET_IPS[key]
+                        success = current_results[key] == "〇"
+                        with st.spinner(f"{name}（{ip}）へ疎通確認中…"):
+                            time.sleep(0.9)
+                        st.session_state.ping_logs[key] = make_ping_log(name, ip, success)
+                        st.session_state.checked[key] = True
+                        st.toast(
+                            f"{name} への疎通：{'成功 〇' if success else '失敗 ×'}",
+                            icon="✅" if success else "🚫",
+                        )
+                        st.rerun()
 
-    all_checked = all(st.session_state.checked.values())
-    if not all_checked:
-        remaining = [f"{k}.{TARGET_NAMES[k]}" for k in TARGET_NAMES if not st.session_state.checked[k]]
-        st.caption(f"未確認：{' / '.join(remaining)}")
+            if st.session_state.ping_logs:
+                with st.expander("pingコンソール出力を見る"):
+                    for key, name in TARGET_NAMES.items():
+                        if key in st.session_state.ping_logs:
+                            st.code(st.session_state.ping_logs[key], language="text")
 
-    # ---- ステップ5：原因の推理 ----
-    if all_checked:
-        st.subheader("④ トラブルの原因を推理しよう")
-        st.write("pingの結果とHUBランプの状態を組み合わせて、"
-                 "想定される障害①〜④のうち、最も可能性が高いものを1つ選んでください。")
-
-        if st.session_state.wrong_attempts >= 1 and not st.session_state.submitted:
-            with st.expander("💡 ヒントを見る（考え方のポイント）"):
-                st.write(FAULT_SCENARIOS[st.session_state.current_fault]["hint"])
-
-        options = ["-- 選択してください --"] + [
-            f"{k} {v['cause']}" for k, v in FAULT_SCENARIOS.items()
-        ]
-        choice = st.selectbox("想定される障害", options, key="answer_select")
-        choice_key = choice.split(" ")[0] if choice != "-- 選択してください --" else None
-
-        if st.button("この原因で回答する", type="primary", disabled=(choice_key is None)):
-            st.session_state.submitted = True
-            st.session_state.selected_answer = choice_key
-            if choice_key != st.session_state.current_fault:
-                st.session_state.wrong_attempts += 1
-            st.rerun()
-
-        if st.session_state.submitted:
-            correct = st.session_state.current_fault
-            if st.session_state.selected_answer == correct:
-                st.success("✅ 正解です！")
-                st.balloons()
-                attempts_msg = (
-                    "一発で正解、お見事です！" if st.session_state.wrong_attempts == 0
-                    else f"（{st.session_state.wrong_attempts}回の再挑戦の末の正解でした。お疲れさまでした！）"
-                )
-                st.markdown(
-                    f"**解説**：正解は「{FAULT_SCENARIOS[correct]['cause']}」でした。{attempts_msg}\n\n"
-                    "上のネットワーク構成図で、故障箇所が赤く表示されています。"
-                    "pingの結果とHUBランプの状態を突き合わせることで、故障箇所を絞り込むことができます。"
-                )
-            else:
-                st.error("❌ 残念、正解ではありません。")
-                st.markdown(
-                    "**考え方のヒント**：pingで「×」になっている機器と「〇」になっている機器、"
-                    "そしてHUBのランプの点灯／消灯パターンを見比べ、どこが壊れていると"
-                    "ちょうどこの組み合わせになるかを、ネットワーク構成図をたどりながら考えてみましょう。"
-                )
-                if st.session_state.wrong_attempts >= 2:
-                    st.info(f"💡 ヒント：{FAULT_SCENARIOS[correct]['hint']}")
-                if st.button("もう一度選び直す"):
-                    st.session_state.submitted = False
-                    st.session_state.selected_answer = "-- 選択してください --"
+        with tab_lamp:
+            st.caption("HUB本体のリンクランプ（点灯＝物理的に接続OK）を目視で確認します。")
+            if not st.session_state.lamp_checked:
+                if st.button("🔍 HUBのランプを確認する", type="secondary", use_container_width=True):
+                    with st.spinner("HUB本体のランプを確認中…"):
+                        time.sleep(0.9)
+                    st.session_state.lamp_checked = True
+                    st.toast("HUBのランプ状態を確認しました", icon="💡")
                     st.rerun()
+            else:
+                lamp_cols = st.columns(2)
+                for i, (port_key, info) in enumerate(LAMP_PORTS.items()):
+                    on = current_lamp[port_key] == "on"
+                    icon = "🟢" if on else "🔴"
+                    state = "点灯" if on else "消灯"
+                    with lamp_cols[i % 2]:
+                        st.markdown(
+                            f'<div class="status-card" style="text-align:center;">'
+                            f'<div style="font-size:22px;">{icon}</div>'
+                            f'<div style="font-size:13px;color:#555;">{info["label"]}</div>'
+                            f'<div style="font-weight:600;">{state}</div></div>',
+                            unsafe_allow_html=True,
+                        )
+                st.caption("※ランプは物理的な接続状態のみを示します。正常点灯していても、"
+                           "機器内部の故障で通信できない場合があります。")
+
+        with tab_summary:
+            st.markdown("**Ping結果一覧**")
+            st.markdown(build_ping_table(current_results, st.session_state.checked), unsafe_allow_html=True)
+            st.write("")
+            st.markdown("**HUBランプ結果一覧**")
+            st.markdown(build_lamp_table(current_lamp, st.session_state.lamp_checked), unsafe_allow_html=True)
+
+        all_checked = all(st.session_state.checked.values())
+        if not all_checked:
+            remaining = [f"{k}.{TARGET_NAMES[k]}" for k in TARGET_NAMES if not st.session_state.checked[k]]
+            st.caption(f"未確認：{' / '.join(remaining)}")
+
+        # ---- ステップ5：原因の推理 ----
+        if all_checked:
+            st.divider()
+            st.subheader("④ トラブルの原因を推理しよう")
+            st.write("pingの結果とHUBランプの状態を組み合わせて、"
+                     "想定される障害①〜④のうち、最も可能性が高いものを1つ選んでください。")
+
+            if st.session_state.wrong_attempts >= 1 and not st.session_state.submitted:
+                with st.expander("💡 ヒントを見る（考え方のポイント）"):
+                    st.write(FAULT_SCENARIOS[st.session_state.current_fault]["hint"])
+
+            options = ["-- 選択してください --"] + [
+                f"{k} {v['cause']}" for k, v in FAULT_SCENARIOS.items()
+            ]
+            choice = st.selectbox("想定される障害", options, key="answer_select")
+            choice_key = choice.split(" ")[0] if choice != "-- 選択してください --" else None
+
+            if st.button("この原因で回答する", type="primary", disabled=(choice_key is None),
+                         use_container_width=True):
+                st.session_state.submitted = True
+                st.session_state.selected_answer = choice_key
+                if choice_key != st.session_state.current_fault:
+                    st.session_state.wrong_attempts += 1
+                st.rerun()
+
+            if st.session_state.submitted:
+                correct = st.session_state.current_fault
+                if st.session_state.selected_answer == correct:
+                    st.success("✅ 正解です！")
+                    st.balloons()
+                    attempts_msg = (
+                        "一発で正解、お見事です！" if st.session_state.wrong_attempts == 0
+                        else f"（{st.session_state.wrong_attempts}回の再挑戦の末の正解でした。お疲れさまでした！）"
+                    )
+                    st.markdown(
+                        f"**解説**：正解は「{FAULT_SCENARIOS[correct]['cause']}」でした。{attempts_msg}\n\n"
+                        "左のネットワーク構成図で、故障箇所が赤く表示されています。"
+                        "pingの結果とHUBランプの状態を突き合わせることで、故障箇所を絞り込むことができます。"
+                    )
+                else:
+                    st.error("❌ 残念、正解ではありません。")
+                    st.markdown(
+                        "**考え方のヒント**：pingで「×」になっている機器と「〇」になっている機器、"
+                        "そしてHUBのランプの点灯／消灯パターンを見比べ、どこが壊れていると"
+                        "ちょうどこの組み合わせになるかを、構成図をたどりながら考えてみましょう。"
+                    )
+                    if st.session_state.wrong_attempts >= 2:
+                        st.info(f"💡 ヒント：{FAULT_SCENARIOS[correct]['hint']}")
+                    if st.button("もう一度選び直す", use_container_width=True):
+                        st.session_state.submitted = False
+                        st.session_state.selected_answer = "-- 選択してください --"
+                        st.rerun()
